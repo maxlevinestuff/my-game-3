@@ -17,7 +17,8 @@ enum game_state {
 	throwing,
 	idle,
 	demo,
-	won
+	won,
+	delay
 } state = demo;
 int difficulty = 2;
 int increment_difficulty_in = 2;
@@ -49,24 +50,24 @@ void PlayMode::generate_solution() {
 		correct_sounds[i] = std::uniform_int_distribution<int>(0,3)(gen);
 
 		//more difficult: each ingredient can be a different sound depending on order
-		// for (int option = 0; option < 4; option++) {
-		// 	while (true) {
-		// 		incorrect_sounds[i][option] = std::uniform_int_distribution<int>(0,3)(gen);
-		// 		if (incorrect_sounds[i][option] != correct_sounds[i])
-		// 			break;
-		// 	}
-		// }
+		for (int option = 0; option < 4; option++) {
+			while (true) {
+				incorrect_sounds[i][option] = std::uniform_int_distribution<int>(0,3)(gen);
+				if (incorrect_sounds[i][option] != correct_sounds[i])
+					break;
+			}
+		}
 
 		//easier: each ingredient has the same sound
-		int s;
-		while (true) {
-			s = std::uniform_int_distribution<int>(0,3)(gen);
-			if (s != correct_sounds[i])
-				break;
-		}
-		for (int option = 0; option < 4; option++) {
-			incorrect_sounds[i][option] = s;
-		}
+		// int s;
+		// while (true) {
+		// 	s = std::uniform_int_distribution<int>(0,3)(gen);
+		// 	if (s != correct_sounds[i])
+		// 		break;
+		// }
+		// for (int option = 0; option < 4; option++) {
+		// 	incorrect_sounds[i][option] = s;
+		// }
 	}
 }
 void PlayMode::add_to_answer(int ingredient) {
@@ -107,6 +108,10 @@ Load< Scene > witch_scene(LoadTagDefault, []() -> Scene const * {
 
 Load< Sound::Sample > background_sample(LoadTagDefault, []() -> Sound::Sample const * {
 	return new Sound::Sample(data_path("background.wav"));
+});
+
+Load< Sound::Sample > cackle_sample(LoadTagDefault, []() -> Sound::Sample const * {
+	return new Sound::Sample(data_path("cackle.wav"));
 });
 
 Load< Sound::Sample > sample1(LoadTagDefault, []() -> Sound::Sample const * {
@@ -223,18 +228,7 @@ PlayMode::PlayMode() : scene(*witch_scene) {
 	}
 	generate_solution();
 	demo_index = 0;
-	demo_timer = 2.0f;
-
-	// hip_base_rotation = hip->rotation;
-	// upper_leg_base_rotation = upper_leg->rotation;
-	// lower_leg_base_rotation = lower_leg->rotation;
-
-	// //get pointer to camera for convenience:
-	// if (scene.cameras.size() != 1) throw std::runtime_error("Expecting scene to have exactly one camera, but it has " + std::to_string(scene.cameras.size()));
-
-	// //start music loop playing:
-	// // (note: position will be over-ridden in update())
-	// leg_tip_loop = Sound::loop_3D(*dusty_floor_sample, 1.0f, get_leg_tip_position(), 10.0f);
+	demo_timer = 1.0f;
 
 	Sound::loop(*background_sample);
 
@@ -292,6 +286,7 @@ bool PlayMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size)
 
 float time_elapsed = 0.0f;
 float won_timer = 3.0f;
+float delay_timer = 1.0f;
 
 void PlayMode::update(float elapsed) {
 	time_elapsed += elapsed;
@@ -333,27 +328,25 @@ void PlayMode::update(float elapsed) {
 		} else if (four.pressed) {
 			state = throwing;
 			thrown = 3;
+		} else if (space.pressed) {
+			if (difficulty != answer_index)
+				score += 100 / difficulty / (difficulty - answer_index);
+			answer_index = 0;
+			state = demo;
+			score -= 100 / difficulty;
+			demo_index = 0;
+			demo_timer = 1.0f;
 		}
 	} else if (state == throwing) {
 		ingredients[thrown]->position = thrown_ingredient_position(throw_progress, thrown);
-		throw_progress += elapsed * 0.9f;
+		throw_progress += elapsed * 1.0f;
 		if (throw_progress > 1.0f) {
 			ingredients[thrown]->position = ingredients_initial_pos[thrown];
 			add_to_answer(thrown);
 			throw_progress = 0.0f;
 			if (answer_index >= solution.size()) {
-				if (solution == answer) {
-					//won
-					handle_win_stats();
-					generate_solution();
-					state = won;
-					won_timer = 3.0f;
-				} else {
-					answer_index = 0;
-					state = demo;
-					demo_index = 0;
-					demo_timer = 2.0f;
-				}
+				state = delay;
+				delay_timer = 1.0f;
 			} else {
 				state = idle;
 			}
@@ -361,10 +354,11 @@ void PlayMode::update(float elapsed) {
 	} else if (state == demo) {
 		demo_timer -= elapsed;
 		if (demo_timer <= 0.0f) {
-			play_fruit_sample(correct_sounds[demo_index]);
+			if (demo_index < correct_sounds.size())
+				play_fruit_sample(correct_sounds[demo_index]);
 			demo_index++;
 			demo_timer = 1.0f;
-			if (demo_index > difficulty - 1)
+			if (demo_index > difficulty)
 				state = idle;
 		}
 	} else if (state == won) {
@@ -372,59 +366,29 @@ void PlayMode::update(float elapsed) {
 		if (won_timer <= 0.0f) {
 			answer_index = 0;
 			state = demo;
+			score += 150 * difficulty;
 			demo_index = 0;
-			demo_timer = 2.0f;
+			demo_timer = 1.0f;
+		}
+	} else if (state == delay) {
+		delay_timer -= elapsed;
+		if (delay_timer <= 0.0f) {
+			if (solution == answer) {
+				//won
+				handle_win_stats();
+				generate_solution();
+				state = won;
+				Sound::play(*cackle_sample);
+				won_timer = 2.5f;
+			} else {
+				answer_index = 0;
+				state = demo;
+				score -= 100 / difficulty;
+				demo_index = 0;
+				demo_timer = 1.0f;
+			}
 		}
 	}
-
-	// //slowly rotates through [0,1):
-	// wobble += elapsed / 10.0f;
-	// wobble -= std::floor(wobble);
-
-	// hip->rotation = hip_base_rotation * glm::angleAxis(
-	// 	glm::radians(5.0f * std::sin(wobble * 2.0f * float(M_PI))),
-	// 	glm::vec3(0.0f, 1.0f, 0.0f)
-	// );
-	// upper_leg->rotation = upper_leg_base_rotation * glm::angleAxis(
-	// 	glm::radians(7.0f * std::sin(wobble * 2.0f * 2.0f * float(M_PI))),
-	// 	glm::vec3(0.0f, 0.0f, 1.0f)
-	// );
-	// lower_leg->rotation = lower_leg_base_rotation * glm::angleAxis(
-	// 	glm::radians(10.0f * std::sin(wobble * 3.0f * 2.0f * float(M_PI))),
-	// 	glm::vec3(0.0f, 0.0f, 1.0f)
-	// );
-
-	// //move sound to follow leg tip position:
-	// leg_tip_loop->set_position(get_leg_tip_position(), 1.0f / 60.0f);
-
-	//move camera:
-	// {
-
-	// 	//combine inputs into a move:
-	// 	constexpr float PlayerSpeed = 30.0f;
-	// 	glm::vec2 move = glm::vec2(0.0f);
-	// 	if (left.pressed && !right.pressed) move.x =-1.0f;
-	// 	if (!left.pressed && right.pressed) move.x = 1.0f;
-	// 	if (down.pressed && !up.pressed) move.y =-1.0f;
-	// 	if (!down.pressed && up.pressed) move.y = 1.0f;
-
-	// 	//make it so that moving diagonally doesn't go faster:
-	// 	if (move != glm::vec2(0.0f)) move = glm::normalize(move) * PlayerSpeed * elapsed;
-
-	// 	glm::mat4x3 frame = camera->transform->make_parent_from_local();
-	// 	glm::vec3 frame_right = frame[0];
-	// 	//glm::vec3 up = frame[1];
-	// 	glm::vec3 frame_forward = -frame[2];
-
-	// 	camera->transform->position += move.x * frame_right + move.y * frame_forward;
-	// }
-
-	// { //update listener to camera position:
-	// 	glm::mat4x3 frame = camera->transform->make_parent_from_local();
-	// 	glm::vec3 frame_right = frame[0];
-	// 	glm::vec3 frame_at = frame[3];
-	// 	Sound::listener.set_position_right(frame_at, frame_right, 1.0f / 60.0f);
-	// }
 
 	//reset button press counters:
 	one.downs = 0;
@@ -446,10 +410,19 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 	glUniform3fv(lit_color_texture_program->LIGHT_ENERGY_vec3, 1, glm::value_ptr(glm::vec3(1.0f, 1.0f, 0.95f)));
 	glUseProgram(0);
 
+	static glm::vec3 r = glm::vec3(0);
+	if (std::fmod(time_elapsed, 0.2f) < 0.1f) {
+		r = glm::vec3(
+			std::uniform_real_distribution<float>(-0.05f, 0.05f)(gen),
+			std::uniform_real_distribution<float>(-0.05f, 0.05f)(gen),
+			std::uniform_real_distribution<float>(-0.05f, 0.05f)(gen)
+		);
+	}
+
 	if (state == won)
-		glClearColor(0.0f, 1.0f, 0.0f, 1.0f);
+		glClearColor(0.0f + r.x, 0.686f + r.y, 0.161f + r.z, 1.0f);
 	else if (state == demo)
-		glClearColor(1.0f, 0.0f, 0.0f, 1.0f);
+		glClearColor(0.776f + r.x, 0.275f + r.y, 0.855f + r.z, 1.0f);
 	else
 		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 	glClearDepth(1.0f); //1.0 is actually the default value to clear the depth buffer to, but FYI you can change it.
@@ -470,21 +443,16 @@ void PlayMode::draw(glm::uvec2 const &drawable_size) {
 			0.0f, 0.0f, 0.0f, 1.0f
 		));
 
-		constexpr float H = 0.09f;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H, -1.0 + 0.1f * H, 0.0),
+		constexpr float H = 0.13f;
+		lines.draw_text(std::to_string(score),
+			glm::vec3(-aspect + 0.1f * H, 1.0 - 1.1f * H, 0.0),
 			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 			glm::u8vec4(0x00, 0x00, 0x00, 0x00));
 		float ofs = 2.0f / drawable_size.y;
-		lines.draw_text("Mouse motion rotates camera; WASD moves; escape ungrabs mouse",
-			glm::vec3(-aspect + 0.1f * H + ofs, -1.0 + + 0.1f * H + ofs, 0.0),
+		lines.draw_text(std::to_string(score),
+			glm::vec3(-aspect + 0.1f * H + ofs, 1.0 - 1.1f * H + ofs, 0.0),
 			glm::vec3(H, 0.0f, 0.0f), glm::vec3(0.0f, H, 0.0f),
 			glm::u8vec4(0xff, 0xff, 0xff, 0x00));
 	}
 	GL_ERRORS();
 }
-
-// glm::vec3 PlayMode::get_leg_tip_position() {
-// 	//the vertex position here was read from the model in blender:
-// 	return lower_leg->make_world_from_local() * glm::vec4(-1.26137f, -11.861f, 0.0f, 1.0f);
-// }
