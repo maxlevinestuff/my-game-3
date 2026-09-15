@@ -23,7 +23,7 @@ struct PlayMode : Mode {
 	struct Button {
 		uint8_t downs = 0;
 		uint8_t pressed = 0;
-	} left, right, down, up;
+	} one, two, three, four, space;
 
 	//local copy of the game scene (so code can change it during gameplay):
 	Scene scene;
@@ -37,7 +37,12 @@ struct PlayMode : Mode {
 	glm::quat lower_leg_base_rotation;
 	float wobble = 0.0f;
 
+	void play_fruit_sample(int);
+	void generate_solution();
+	void add_to_answer(int);
 	glm::vec3 random_bubble_position();
+	glm::vec3 thrown_ingredient_position(float, int);
+	void handle_win_stats();
 
 	//music coming from the tip of the leg (as a demonstration):
 	std::shared_ptr< Sound::PlayingSample > leg_tip_loop;
